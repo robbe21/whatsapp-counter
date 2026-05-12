@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>WhatsApp Berichten Teller</title>
+<style>
+  :root {
+    --bg: #0b141a;
+    --panel: #111b21;
+    --panel-2: #1f2c34;
+    --accent: #00a884;
+    --accent-hover: #06cf9c;
+    --text: #e9edef;
+    --text-dim: #8696a0;
+    --border: #2a3942;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-weight: 600;
+    font-size: 28px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    margin: 0 0 32px;
+    font-size: 14px;
+  }
+  .drop {
+    display: block;
+    width: 100%;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 48px 24px;
+    text-align: center;
+    background: var(--panel);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .drop:hover, .drop.drag {
+    border-color: var(--accent);
+    background: var(--panel-2);
+  }
+  .drop p { margin: 8px 0; color: var(--text-dim); }
+  .drop strong { color: var(--text); }
+  .drop input { display: none; }
+  .hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 16px;
+    line-height: 1.6;
+  }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .card .label {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .card .value {
+    font-size: 24px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 16px;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--panel-2);
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    position: sticky;
+    top: 0;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--panel-2); }
+  .bar {
+    display: inline-block;
+    background: var(--accent);
+    height: 8px;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-left: 8px;
+  }
+  .section { margin-top: 32px; }
+  .section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 12px;
+    color: var(--text);
+  }
+  .table-wrap {
+    max-height: 600px;
+    overflow-y: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  .error {
+    background: #4a1a1a;
+    border: 1px solid #7a2a2a;
+    color: #ffb4b4;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-top: 16px;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  button:hover { background: var(--accent-hover); }
+  button.secondary {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  button.secondary:hover { background: var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>WhatsApp Berichten Teller</h1>
+  <p class="subtitle">Upload een WhatsApp chat export (.txt) en zie hoeveel berichten je per week hebt uitgewisseld.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".txt,.zip">
+    <p><strong>Klik of sleep een WhatsApp export hierheen</strong></p>
+    <p>.txt bestand (of .zip met daarin een .txt)</p>
+    <div class="hint">
+      Exporteer een chat in WhatsApp via: Chat openen → Naam bovenin → Chat exporteren → Zonder media.<br>
+      Alles wordt lokaal in je browser verwerkt, niets wordt geüpload.
+    </div>
+  </label>
+
+  <div id="error"></div>
+  <div id="result"></div>
+</div>
+
+<script>
+const dropEl = document.getElementById('drop');
+const fileEl = document.getElementById('file');
+const errEl = document.getElementById('error');
+const resultEl = document.getElementById('result');
+
+fileEl.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+['dragenter','dragover'].forEach(ev => {
+  dropEl.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    dropEl.classList.add('drag');
+  });
+});
+['dragleave','drop'].forEach(ev => {
+  dropEl.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    dropEl.classList.remove('drag');
+  });
+});
+dropEl.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+
+async function handleFile(file) {
+  errEl.innerHTML = '';
+  resultEl.innerHTML = '';
+  try {
+    let text;
+    if (file.name.toLowerCase().endsWith('.zip')) {
+      text = await extractTxtFromZip(file);
+    } else {
+      text = await file.text();
+    }
+    const messages = parseWhatsApp(text);
+    if (!messages.length) {
+      throw new Error('Geen berichten gevonden. Is dit wel een WhatsApp export?');
+    }
+    render(messages, file.name);
+  } catch (e) {
+    errEl.innerHTML = `<div class="error">${e.message}</div>`;
+    console.error(e);
+  }
+}
+
+async function extractTxtFromZip(file) {
+  // Minimal ZIP reader for stored or deflated entries
+  const buf = await file.arrayBuffer();
+  const view = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  // Find End of Central Directory
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Kon zip niet lezen.');
+  const cdOffset = view.getUint32(eocd + 16, true);
+  const cdEntries = view.getUint16(eocd + 10, true);
+  let p = cdOffset;
+  for (let i = 0; i < cdEntries; i++) {
+    if (view.getUint32(p, true) !== 0x02014b50) break;
+    const method = view.getUint16(p + 10, true);
+    const compSize = view.getUint32(p + 20, true);
+    const uncompSize = view.getUint32(p + 24, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const localHeader = view.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.slice(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    if (!name.toLowerCase().endsWith('.txt')) continue;
+    // Read local file header
+    const lhNameLen = view.getUint16(localHeader + 26, true);
+    const lhExtraLen = view.getUint16(localHeader + 28, true);
+    const dataStart = localHeader + 30 + lhNameLen + lhExtraLen;
+    const dataEnd = dataStart + compSize;
+    const data = u8.slice(dataStart, dataEnd);
+    if (method === 0) {
+      return new TextDecoder().decode(data);
+    } else if (method === 8) {
+      const ds = new DecompressionStream('deflate-raw');
+      const stream = new Blob([data]).stream().pipeThrough(ds);
+      const blob = await new Response(stream).blob();
+      return await blob.text();
+    } else {
+      throw new Error('Onbekende compressiemethode in zip.');
+    }
+  }
+  throw new Error('Geen .txt bestand gevonden in zip.');
+}
+
+// Date-line regexes for various WhatsApp export formats
+const LINE_PATTERNS = [
+  // iOS: [DD/MM/YYYY, HH:MM:SS] Sender: Message  (also with -, ., and 2-digit year)
+  /^‎?\[(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([APap][Mm])?\]\s*(?:([^:]+?):\s)?(.*)$/,
+  // Android: DD/MM/YYYY, HH:MM - Sender: Message
+  /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([APap][Mm])?\s*[-–]\s*(?:([^:]+?):\s)?(.*)$/,
+];
+
+function parseWhatsApp(text) {
+  // Strip BOM and normalize
+  text = text.replace(/^﻿/, '').replace(/\r\n/g, '\n');
+  const lines = text.split('\n');
+  const messages = [];
+  let dayFirst = null; // determine from data
+
+  // First pass: collect raw matches to decide day-first vs month-first
+  const raw = [];
+  for (const line of lines) {
+    for (const re of LINE_PATTERNS) {
+      const m = line.match(re);
+      if (m) {
+        raw.push(m);
+        break;
+      }
+    }
+  }
+
+  // Heuristic: if any first-number > 12, it must be day; if any second-number > 12, first is month
+  let dayGTBig = false, monGTBig = false;
+  for (const m of raw) {
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    if (a > 12) dayGTBig = true;
+    if (b > 12) monGTBig = true;
+  }
+  if (dayGTBig && !monGTBig) dayFirst = true;
+  else if (monGTBig && !dayGTBig) dayFirst = false;
+  else dayFirst = true; // WhatsApp default in NL/EU is day-first
+
+  for (const m of raw) {
+    let d = parseInt(m[1], 10);
+    let mo = parseInt(m[2], 10);
+    if (!dayFirst) { const t = d; d = mo; mo = t; }
+    let y = parseInt(m[3], 10);
+    if (y < 100) y += 2000;
+    let h = parseInt(m[4], 10);
+    const min = parseInt(m[5], 10);
+    const ampm = m[7];
+    if (ampm) {
+      const isPM = /pm/i.test(ampm);
+      if (h === 12) h = isPM ? 12 : 0;
+      else if (isPM) h += 12;
+    }
+    const sender = (m[8] || '').trim();
+    const body = (m[9] || '').trim();
+    if (!sender) continue; // skip system messages (no "Name:")
+    // Filter common WA placeholders
+    if (/^messages and calls are end-to-end encrypted/i.test(body)) continue;
+    const date = new Date(y, mo - 1, d, h, min);
+    if (isNaN(date.getTime())) continue;
+    messages.push({ date, sender, body });
+  }
+  return messages;
+}
+
+// Get Monday of the week (ISO-ish: Mon-Sun)
+function weekStart(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = d.getDay(); // 0=Sun ... 6=Sat
+  const diff = (day === 0 ? -6 : 1 - day);
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function formatDateNL(d) {
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+}
+function formatDateFullNL(d) {
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function render(messages, filename) {
+  messages.sort((a, b) => a.date - b.date);
+  const first = messages[0].date;
+  const last = messages[messages.length - 1].date;
+  const senders = [...new Set(messages.map(m => m.sender))];
+
+  // Build week buckets
+  const weeks = new Map(); // key -> { start, end, total, perSender }
+  for (const m of messages) {
+    const start = weekStart(m.date);
+    const key = start.toISOString().slice(0, 10);
+    if (!weeks.has(key)) {
+      const end = new Date(start); end.setDate(end.getDate() + 6);
+      const perSender = {};
+      senders.forEach(s => perSender[s] = 0);
+      weeks.set(key, { start, end, total: 0, perSender });
+    }
+    const w = weeks.get(key);
+    w.total++;
+    w.perSender[m.sender] = (w.perSender[m.sender] || 0) + 1;
+  }
+  const weekList = [...weeks.values()].sort((a, b) => a.start - b.start);
+  const maxWeek = Math.max(...weekList.map(w => w.total));
+
+  // Per-sender totals
+  const senderTotals = {};
+  senders.forEach(s => senderTotals[s] = 0);
+  messages.forEach(m => senderTotals[m.sender]++);
+
+  let html = '';
+  html += `<div class="summary">`;
+  html += card('Totaal berichten', messages.length.toLocaleString('nl-NL'));
+  html += card('Aantal weken', weekList.length.toLocaleString('nl-NL'));
+  html += card('Eerste bericht', formatDateFullNL(first));
+  html += card('Laatste bericht', formatDateFullNL(last));
+  html += card('Gemiddeld / week', Math.round(messages.length / weekList.length).toLocaleString('nl-NL'));
+  html += `</div>`;
+
+  // Per-sender
+  html += `<div class="section"><h2>Per persoon</h2>`;
+  html += `<table><thead><tr><th>Persoon</th><th class="num">Berichten</th><th class="num">%</th></tr></thead><tbody>`;
+  const sortedSenders = senders.slice().sort((a, b) => senderTotals[b] - senderTotals[a]);
+  for (const s of sortedSenders) {
+    const pct = (senderTotals[s] / messages.length * 100).toFixed(1);
+    html += `<tr><td>${escapeHtml(s)}</td><td class="num">${senderTotals[s].toLocaleString('nl-NL')}</td><td class="num">${pct}%</td></tr>`;
+  }
+  html += `</tbody></table></div>`;
+
+  // Per week
+  html += `<div class="section"><h2>Per week</h2>`;
+  html += `<div class="actions">
+    <button onclick="downloadCSV()">Download als CSV</button>
+    <button class="secondary" onclick="toggleOrder()">Omgekeerde volgorde</button>
+  </div>`;
+  html += `<div class="table-wrap"><table id="weekTable"><thead><tr>`;
+  html += `<th>Week</th>`;
+  for (const s of sortedSenders) html += `<th class="num">${escapeHtml(s)}</th>`;
+  html += `<th class="num">Totaal</th><th></th></tr></thead><tbody>`;
+  for (const w of weekList) {
+    html += `<tr>`;
+    html += `<td>${formatDateNL(w.start)} – ${formatDateNL(w.end)} ${w.start.getFullYear() !== new Date().getFullYear() ? w.start.getFullYear() : ''}</td>`;
+    for (const s of sortedSenders) {
+      html += `<td class="num">${(w.perSender[s] || 0).toLocaleString('nl-NL')}</td>`;
+    }
+    html += `<td class="num"><strong>${w.total.toLocaleString('nl-NL')}</strong></td>`;
+    const w100 = (w.total / maxWeek) * 120;
+    html += `<td><span class="bar" style="width:${w100}px"></span></td>`;
+    html += `</tr>`;
+  }
+  html += `</tbody></table></div></div>`;
+
+  resultEl.innerHTML = html;
+
+  // Store data for CSV export
+  window._weekData = { weekList, sortedSenders, filename };
+}
+
+function card(label, value) {
+  return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function toggleOrder() {
+  const tbody = document.querySelector('#weekTable tbody');
+  const rows = Array.from(tbody.children);
+  rows.reverse().forEach(r => tbody.appendChild(r));
+}
+
+function downloadCSV() {
+  const { weekList, sortedSenders, filename } = window._weekData;
+  const headers = ['Week start', 'Week eind', ...sortedSenders, 'Totaal'];
+  const rows = [headers];
+  for (const w of weekList) {
+    const row = [
+      w.start.toISOString().slice(0, 10),
+      w.end.toISOString().slice(0, 10),
+      ...sortedSenders.map(s => w.perSender[s] || 0),
+      w.total,
+    ];
+    rows.push(row);
+  }
+  const csv = rows.map(r => r.map(cell => {
+    const s = String(cell);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.replace(/\.[^.]+$/, '') + '_per_week.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
