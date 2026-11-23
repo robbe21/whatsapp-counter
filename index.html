@@ -163,6 +163,43 @@
     border: 1px solid var(--border);
   }
   button.secondary:hover { background: var(--border); }
+  .yar-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .yar-controls label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .yar-controls select, .yar-controls input[type=text], .yar-controls input[type=date] {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 8px;
+    font-size: 14px;
+  }
+  .yar-controls .check { display: flex; align-items: center; gap: 6px; margin-top: 22px; color: var(--text); font-size: 13px; }
+  .steps { color: var(--text-dim); font-size: 13px; line-height: 1.7; margin: 8px 0 12px; padding-left: 20px; }
+  .steps strong { color: var(--text); }
+  a.bookmarklet {
+    display: inline-block;
+    background: #1f6feb;
+    color: white;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: grab;
+  }
+  .ok-msg { color: var(--accent-hover); font-size: 13px; align-self: center; }
 </style>
 </head>
 <body>
@@ -429,10 +466,127 @@ function render(messages, filename) {
   }
   html += `</tbody></table></div></div>`;
 
+  html += yarSectionHtml(sortedSenders);
+
   resultEl.innerHTML = html;
 
   // Store data for CSV export
   window._weekData = { weekList, sortedSenders, filename };
+  setupYar(messages, sortedSenders);
+}
+
+// ---------- YAR-tijdsregistratie ----------
+// YAR vraagt per week (ma–zo): wederzijdse berichten en onbeantwoorde berichten.
+// Onbeantwoord = berichten van de coach na het laatste bericht van de jongere in die week
+// (ook als het antwoord pas de week erna komt). Wederzijds = de rest van de berichten van die week.
+
+function ymd(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function yarWeeks(messages, coach) {
+  const map = new Map();
+  for (const m of messages) {
+    const start = weekStart(m.date);
+    const key = ymd(start);
+    if (!map.has(key)) map.set(key, { start, msgs: [] });
+    map.get(key).msgs.push(m);
+  }
+  return [...map.values()].sort((a, b) => a.start - b.start).map(w => {
+    let lastOther = -1;
+    w.msgs.forEach((m, i) => { if (m.sender !== coach) lastOther = i; });
+    let onbeantwoord = 0;
+    for (let i = lastOther + 1; i < w.msgs.length; i++) if (w.msgs[i].sender === coach) onbeantwoord++;
+    const end = new Date(w.start); end.setDate(end.getDate() + 6);
+    return { start: w.start, end, wederzijds: w.msgs.length - onbeantwoord, onbeantwoord };
+  });
+}
+
+function yarSectionHtml(senders) {
+  const opts = senders.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  return `<div class="section"><h2>YAR-tijdsregistratie</h2>
+    <div class="yar-controls">
+      <label>Jij (de coach)<select id="yarCoach">${opts}</select></label>
+      <label>Jongere, zoals op de YAR-site<input type="text" id="yarJongere" placeholder="bv. Jason"></label>
+      <label>Vanaf week van<input type="date" id="yarFrom"></label>
+      <label>Tot en met week van<input type="date" id="yarTo"></label>
+    </div>
+    <div class="table-wrap"><table id="yarTable"></table></div>
+    <div class="actions">
+      <button onclick="copyYar()">Kopieer voor YAR</button>
+      <span id="yarCopied" class="ok-msg"></span>
+    </div>
+    <ol class="steps">
+      <li>Eén keer: sleep deze knop naar je bladwijzerbalk → <a class="bookmarklet" id="yarBookmarklet" href="#" onclick="alert('Sleep deze knop naar je bladwijzerbalk en klik hem aan op de YAR-tijdsregistratie.');return false;">YAR invullen</a></li>
+      <li>Klik hierboven op <strong>Kopieer voor YAR</strong>.</li>
+      <li>Open <strong>yarvolunteers.powerappsportals.com/timesheet</strong> en klik op de bladwijzer <strong>YAR invullen</strong>.</li>
+      <li>Plak (Cmd+V), kijk de weken na en klik op <strong>Indienen</strong>. Weken die al op de site staan worden overgeslagen.</li>
+    </ol>
+  </div>`;
+}
+
+let _yar = null;
+
+function setupYar(messages, senders) {
+  const coachEl = document.getElementById('yarCoach');
+  let saved = null;
+  try { saved = localStorage.getItem('yar-coach'); } catch (e) {}
+  coachEl.value = senders.includes(saved) ? saved : (senders.find(s => /robbe/i.test(s)) || senders[0]);
+  const fromEl = document.getElementById('yarFrom');
+  const toEl = document.getElementById('yarTo');
+  const first = weekStart(messages[0].date);
+  // Standaard tot en met de laatste volledige week: de lopende week is nog niet af.
+  const lastFull = weekStart(new Date()); lastFull.setDate(lastFull.getDate() - 7);
+  const lastMsg = weekStart(messages[messages.length - 1].date);
+  fromEl.value = ymd(first);
+  toEl.value = ymd(lastMsg < lastFull ? lastMsg : lastFull);
+  const jongereEl = document.getElementById('yarJongere');
+  const setJongere = () => {
+    const other = senders.find(s => s !== coachEl.value) || '';
+    jongereEl.value = other.split(' ')[0];
+  };
+  setJongere();
+  coachEl.addEventListener('change', () => { try { localStorage.setItem('yar-coach', coachEl.value); } catch (e) {} setJongere(); drawYar(); });
+  fromEl.addEventListener('change', drawYar);
+  toEl.addEventListener('change', drawYar);
+  _yar = { messages };
+  document.getElementById('yarBookmarklet').href = 'javascript:' + encodeURIComponent(document.getElementById('yar-bookmarklet-src').textContent.trim());
+  drawYar();
+}
+
+function yarRows() {
+  const coach = document.getElementById('yarCoach').value;
+  const from = document.getElementById('yarFrom').value;
+  const to = document.getElementById('yarTo').value;
+  return yarWeeks(_yar.messages, coach).filter(w => (!from || ymd(w.start) >= ymd(weekStart(new Date(from)))) && (!to || ymd(w.start) <= ymd(weekStart(new Date(to)))));
+}
+
+function drawYar() {
+  const weeks = yarRows();
+  let html = `<thead><tr><th>Week (ma–zo)</th><th class="num">Wederzijds</th><th class="num">Onbeantwoord</th></tr></thead><tbody>`;
+  for (const w of weeks) {
+    html += `<tr><td>${formatDateFullNL(w.start)} – ${formatDateFullNL(w.end)}</td><td class="num">${w.wederzijds}</td><td class="num">${w.onbeantwoord}</td></tr>`;
+  }
+  if (!weeks.length) html += `<tr><td colspan="3">Geen berichten in deze periode.</td></tr>`;
+  html += `</tbody>`;
+  document.getElementById('yarTable').innerHTML = html;
+  document.getElementById('yarCopied').textContent = '';
+}
+
+async function copyYar() {
+  const rows = [];
+  for (const w of yarRows()) {
+    if (w.wederzijds) rows.push({ type: 'wederzijds', start: ymd(w.start), end: ymd(w.end), aantal: w.wederzijds });
+    if (w.onbeantwoord) rows.push({ type: 'onbeantwoord', start: ymd(w.start), end: ymd(w.end), aantal: w.onbeantwoord });
+  }
+  const payload = JSON.stringify({ yar: 1, jongere: document.getElementById('yarJongere').value.trim(), rows });
+  const msg = document.getElementById('yarCopied');
+  try {
+    await navigator.clipboard.writeText(payload);
+    msg.textContent = `Gekopieerd: ${rows.length} regels. Plak ze nu in de bladwijzer op de YAR-site.`;
+  } catch (e) {
+    prompt('Kopiëren lukte niet automatisch. Kopieer deze tekst:', payload);
+  }
 }
 
 function card(label, value) {
@@ -455,8 +609,8 @@ function downloadCSV() {
   const rows = [headers];
   for (const w of weekList) {
     const row = [
-      w.start.toISOString().slice(0, 10),
-      w.end.toISOString().slice(0, 10),
+      ymd(w.start),
+      ymd(w.end),
       ...sortedSenders.map(s => w.perSender[s] || 0),
       w.total,
     ];
@@ -474,6 +628,133 @@ function downloadCSV() {
   a.click();
   URL.revokeObjectURL(url);
 }
+</script>
+
+<!-- Bron van de bladwijzer "YAR invullen": draait op yarvolunteers.powerappsportals.com/timesheet/
+     en vult per regel het formulier "Wederzijdse berichten" of "Onbeantwoorde berichten" in. -->
+<script type="text/plain" id="yar-bookmarklet-src">
+(async () => {
+  const ENT = { wederzijds: 'yar_bericht', onbeantwoord: 'yar_pogingcontactviaberichten' };
+  const LABEL = { wederzijds: 'Wederzijds', onbeantwoord: 'Onbeantwoord' };
+  if (!/\/timesheet/i.test(location.pathname) || !window.jQuery) {
+    alert('Open eerst de YAR-tijdsregistratie (yarvolunteers.powerappsportals.com/timesheet/) en klik dan opnieuw op de bladwijzer.');
+    return;
+  }
+  const $ = window.jQuery;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const waitFor = async (fn, ms) => { const t = Date.now(); while (Date.now() - t < (ms || 20000)) { let v; try { v = fn(); } catch (e) { v = null; } if (v) return v; await sleep(300); } return null; };
+  const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const dmy = iso => { const [y, m, d] = iso.split('-'); return +d + '-' + +m + '-' + y; };
+  const grid = entity => [...document.querySelectorAll('.entity-grid')].find(g => { try { return JSON.parse(atob(g.getAttribute('data-view-layouts')))[0].Configuration.EntityName === entity; } catch (e) { return false; } });
+  const createBtn = entity => { let c = grid(entity); while (c && c !== document.body && !c.querySelector('a.create-action')) c = c.parentElement; const b = c ? c.querySelectorAll('a.create-action') : []; return b.length === 1 ? b[0] : null; };
+  const existing = entity => {
+    const set = new Set(); const g = grid(entity); if (!g) return set;
+    g.querySelectorAll('tbody tr').forEach(tr => { const m = tr.textContent.match(/(\d{1,2})-(\d{1,2})-(\d{4})/); if (m) set.add(+m[1] + '-' + +m[2] + '-' + m[3]); });
+    return set;
+  };
+
+  document.getElementById('yar-fill-panel')?.remove();
+  const p = document.createElement('div');
+  p.id = 'yar-fill-panel';
+  p.style.cssText = 'position:fixed;top:16px;right:16px;width:460px;max-height:90vh;overflow:auto;z-index:2147483647;background:#fff;color:#222;border:2px solid #007a87;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.3);padding:14px;font:14px/1.4 -apple-system,Segoe UI,sans-serif';
+  p.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center"><strong>YAR invullen (WhatsApp-teller)</strong><a href="#" id="yf-x" style="text-decoration:none;font-size:18px">×</a></div>'
+    + '<textarea id="yf-in" placeholder="Plak hier wat je kopieerde met \'Kopieer voor YAR\' (Cmd+V)" style="width:100%;height:60px;margin:8px 0;font:12px monospace"></textarea>'
+    + '<div id="yf-list"></div><div id="yf-status" style="margin-top:8px;font-size:13px"></div>';
+  document.body.appendChild(p);
+  p.querySelector('#yf-x').onclick = e => { e.preventDefault(); p.remove(); };
+  const status = (t, err) => { const s = p.querySelector('#yf-status'); s.textContent = t; s.style.color = err ? '#b00020' : '#222'; };
+  const input = p.querySelector('#yf-in');
+  let data = null;
+
+  const show = () => {
+    let d;
+    try { d = JSON.parse(input.value); } catch (e) { p.querySelector('#yf-list').innerHTML = ''; if (input.value.trim()) status('Dit is geen tekst uit de WhatsApp-teller.', true); return; }
+    if (!d || d.yar !== 1 || !Array.isArray(d.rows)) { status('Dit is geen tekst uit de WhatsApp-teller.', true); return; }
+    data = d;
+    const have = { wederzijds: existing(ENT.wederzijds), onbeantwoord: existing(ENT.onbeantwoord) };
+    let h = '<div style="font-size:13px;margin-bottom:6px">Jongere: <input id="yf-j" value="' + String(d.jongere || '').replace(/"/g, '&quot;') + '" style="width:150px"></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left"><th></th><th>Week</th><th>Soort</th><th style="text-align:right">Aantal</th><th></th></tr>';
+    d.rows.forEach((r, i) => {
+      const dup = have[r.type] && have[r.type].has(dmy(r.start));
+      h += '<tr style="border-top:1px solid #ddd"><td><input type="checkbox" class="yf-c" data-i="' + i + '"' + (dup ? '' : ' checked') + '></td><td>' + dmy(r.start) + ' – ' + dmy(r.end) + '</td><td>' + LABEL[r.type] + '</td><td style="text-align:right">' + r.aantal + '</td><td class="yf-s" data-i="' + i + '" style="font-size:12px;color:#666">' + (dup ? 'staat er al' : '') + '</td></tr>';
+    });
+    h += '</table><div style="margin-top:10px;display:flex;gap:8px"><button id="yf-go" style="background:#007a87;color:#fff;border:0;padding:7px 14px;border-radius:5px;cursor:pointer">Indienen</button>'
+      + '<button id="yf-test" style="background:#eee;border:1px solid #ccc;padding:7px 14px;border-radius:5px;cursor:pointer">Test: vul de eerste in, niet indienen</button></div>';
+    p.querySelector('#yf-list').innerHTML = h;
+    status('Kijk de weken na. Al geregistreerde weken staan uitgevinkt (de site toont er maar een deel, kijk dus zelf ook even).');
+    p.querySelector('#yf-go').onclick = () => run(true);
+    p.querySelector('#yf-test').onclick = () => run(false);
+  };
+  input.addEventListener('input', show);
+  input.focus();
+
+  async function addRow(r, jongere, submit) {
+    const btn = createBtn(ENT[r.type]);
+    if (!btn) throw new Error('Knop "Maken" niet gevonden bij ' + LABEL[r.type]);
+    btn.click();
+    const f = await waitFor(() => [...document.querySelectorAll('.modal iframe')].find(f => {
+      const d = f.contentDocument;
+      return f.offsetParent !== null && d && d.readyState === 'complete' && d.getElementById('yar_aantal') && !d.__yarFilled && f.contentWindow.jQuery && f.contentWindow.moment;
+    }));
+    if (!f) throw new Error('Het formulier ging niet open');
+    const w = f.contentWindow, d = f.contentDocument, j = w.jQuery;
+    d.__yarFilled = true;
+    const setDate = (id, iso) => {
+      const dp = j(d.getElementById(id + '_datepicker_description')).closest('.datetimepicker').data('DateTimePicker');
+      if (!dp) throw new Error('Datumveld ' + id + ' niet gevonden');
+      dp.date(w.moment(iso));
+    };
+    const a = d.getElementById('yar_aantal'); a.value = String(r.aantal); j(a).trigger('change');
+    setDate('scheduledstart', r.start + 'T12:00');
+    setDate('scheduledend', r.end + 'T12:00');
+    const sel = d.getElementById('yar_gekoppeldejongere');
+    const opts = [...sel.options].filter(o => o.value);
+    const o = opts.length === 1 ? opts[0] : opts.find(o => jongere && norm(o.text).includes(norm(jongere)));
+    if (!o) throw new Error('Jongere "' + jongere + '" niet gevonden. Op de site staan: ' + opts.map(o => o.text).join(', '));
+    sel.value = o.value; j(sel).trigger('change');
+    if (!submit) return 'ingevuld, niet ingediend';
+    const modal = f.closest('.modal');
+    d.getElementById('InsertButton').click();
+    const res = await waitFor(() => {
+      if (!$(modal).is(':visible')) return 'ok';
+      const nd = f.contentDocument;
+      const errEl = nd && nd.querySelector('.validation-summary, .alert-danger');
+      if (errEl && errEl.offsetParent !== null && errEl.textContent.trim()) return 'fout: ' + errEl.textContent.trim().replace(/\s+/g, ' ');
+      if (nd && nd !== d && nd.readyState === 'complete' && !nd.getElementById('yar_aantal')) { $(modal).modal('hide'); return 'ok'; }
+      return null;
+    }, 30000);
+    if (!res) throw new Error('Geen bevestiging van de site na 30 seconden');
+    if (res !== 'ok') throw new Error(res);
+    await sleep(1500);
+    return 'ingediend ✓';
+  }
+
+  async function run(submit) {
+    const jongere = (p.querySelector('#yf-j') || {}).value || data.jongere;
+    const idx = [...p.querySelectorAll('.yf-c')].filter(c => c.checked).map(c => +c.dataset.i);
+    if (!idx.length) { status('Niets aangevinkt.', true); return; }
+    const todo = submit ? idx : idx.slice(0, 1);
+    if (submit && !confirm(todo.length + ' regels indienen op de YAR-site?')) return;
+    p.querySelectorAll('button').forEach(b => b.disabled = true);
+    let done = 0;
+    for (const i of todo) {
+      const cell = p.querySelector('.yf-s[data-i="' + i + '"]');
+      cell.textContent = 'bezig…'; cell.style.color = '#666';
+      try {
+        cell.textContent = await addRow(data.rows[i], jongere, submit);
+        cell.style.color = '#0a7a3a';
+        if (submit) { p.querySelector('.yf-c[data-i="' + i + '"]').checked = false; done++; }
+      } catch (e) {
+        cell.textContent = 'mislukt'; cell.style.color = '#b00020';
+        status(e.message + (submit ? ' (gestopt na ' + done + ' ingediende regels)' : ''), true);
+        p.querySelectorAll('button').forEach(b => b.disabled = false);
+        return;
+      }
+    }
+    p.querySelectorAll('button').forEach(b => b.disabled = false);
+    status(submit ? 'Klaar: ' + done + ' regels ingediend. Herlaad de pagina om ze in de lijsten te zien.' : 'Test klaar: het formulier staat ingevuld open en is niet ingediend. Sluit het met ×.');
+  }
+})();
 </script>
 </body>
 </html>
